@@ -68,6 +68,15 @@ def moves_and_comments(game):
     return game.accept(chess.pgn.StringExporter(headers=False, variations=True, comments=True))
 
 
+def import_chapter(args, token, game, name):
+    request(
+        "POST",
+        f"{API}/{args.study_id}/import-pgn",
+        token,
+        {"pgn": str(game), "name": name, "orientation": args.orientation},
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("pgn", help="local PGN file, e.g. repertoire/white.pgn")
@@ -75,6 +84,11 @@ def main():
     parser.add_argument("--orientation", choices=["white", "black"], default="white")
     parser.add_argument("--dry-run", action="store_true", help="only show what would change")
     parser.add_argument("--prune", action="store_true", help="delete study chapters missing from the local file")
+    parser.add_argument(
+        "--replace-all",
+        action="store_true",
+        help="re-import every chapter in file order and delete all existing ones",
+    )
     args = parser.parse_args()
     token = load_token()
 
@@ -91,6 +105,21 @@ def main():
             (chapter_id, moves_and_comments(game))
         )
 
+    if args.replace_all:
+        for name in names:
+            print(f"add        {name}")
+        for name in remote:
+            print(f"delete     {name} (old copy)")
+        if args.dry_run:
+            return
+        # Import before deleting so the study is never left empty.
+        for game, name in zip(local, names):
+            import_chapter(args, token, game, name)
+        for chapters in remote.values():
+            for chapter_id, _ in chapters:
+                request("DELETE", f"{API}/{args.study_id}/{chapter_id}", token)
+        return
+
     for game, name in zip(local, names):
         existing = remote.pop(name, [])
         if len(existing) == 1 and existing[0][1] == moves_and_comments(game):
@@ -100,12 +129,7 @@ def main():
         if args.dry_run:
             continue
         # Import before deleting so the study is never left empty.
-        request(
-            "POST",
-            f"{API}/{args.study_id}/import-pgn",
-            token,
-            {"pgn": str(game), "name": name, "orientation": args.orientation},
-        )
+        import_chapter(args, token, game, name)
         for chapter_id, _ in existing:
             request("DELETE", f"{API}/{args.study_id}/{chapter_id}", token)
 
